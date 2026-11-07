@@ -1,0 +1,55 @@
+name: Big BLUE Week 9 CIN-ATL live pregame stats
+on:
+  push:
+    paths:
+      - '.github/workflows/big_blue_week9_cin_atl.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  collect-week9-cin-atl:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install free nflreadpy source
+        run: python -m pip install --upgrade nflreadpy
+      - name: Fetch genuine 2026 pregame NFL player stats and snaps
+        run: python nba_algo_data_loader_v1_3_0.py --season 2026 --week 9 --out-dir live_feed
+      - name: Validate and extract Cincinnati versus Atlanta
+        run: |
+          python - <<'PY'
+          import json, pathlib, collections
+          folder=pathlib.Path('live_feed')
+          paths=list(folder.glob('*DATA_FEED.json'))
+          if len(paths)!=1: raise RuntimeError('Expected exactly one data feed: '+str(paths))
+          feed=json.loads(paths[0].read_text())
+          if feed['season']!=2026 or feed['week_to_predict']!=9: raise RuntimeError('Wrong season or week')
+          p=[x for x in feed['players'] if x['team'] in ('CIN','ATL')]
+          counts=collections.Counter(x['team'] for x in p)
+          print('2026 W9 CIN/ATL players: ',dict(counts),flush=True)
+          if any(counts.get(t,0)<10 for t in ('CIN','ATL')): raise RuntimeError('Incomplete player pool')
+          print('Rows',feed['audit']['eligible_player_stat_rows'],'snap join',feed['audit']['snap_join_rate'],'weeks',feed['included_weeks'],flush=True)
+          for x in p:
+            if any(int(k[1:])>=9 for h in x.get('historical_games',{}).values() for k in h):
+              raise RuntimeError('Week 9 or later data leakage: '+x['name'])
+          for x in p:
+            if x['name'].lower() in ('joe burrow',"ja'marr chase",'tee higgins','chase brown','bijan robinson','drake london','michael penix jr.','kyle pitts'):
+              print(x['team'],x['name'],'weeks',x['recent_recorded_weeks'],
+                 'targets',x['prior_means'].get('targets'),'rush_attempts',x['prior_means'].get('rush_attempts'),
+                 'snap',x['role_trend'].get('snap_share_recent'),flush=True)
+          out=dict(feed)
+          out['players']=p
+          out['scheduled_games']=[g for g in feed.get('scheduled_games',[]) if {g.get('away'),g.get('home')}=={'CIN','ATL'}]
+          (folder/'big_blue_week9_cin_atl_extracted.json').write_text(json.dumps(out,indent=2))
+          print('PASS: verified free data downloaded and pregame week cutoffs applied',flush=True)
+          PY
+      - name: Upload audit and extracted feed
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Big_BLUE_2026_W09_CIN_ATL_FREE_DATA
+          path: live_feed/
+          if-no-files-found: warn
