@@ -1,0 +1,45 @@
+name: Big BLUE historical points per drive (no picks)
+on:
+  push:
+    paths:
+      - '.github/workflows/big_blue_historical_drives.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  drives:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install nflreadpy
+        run: python -m pip install nflreadpy
+      - name: Count actual historical offensive drives from nflverse PBP
+        run: |
+          python - <<'PY'
+          import nflreadpy as nfl,collections,json,pathlib
+          src=nfl.load_pbp(seasons=[2025,2026])
+          print('PBP records',src.height,'PBP columns',src.columns,flush=True)
+          rows=src.select([s for s in ['season','week','game_id','posteam','drive','fixed_drive','play_type','season_type'] if s in src.columns]).to_dicts()
+          drives=collections.defaultdict(set)
+          for r in rows:
+            if r.get('season') not in (2025,2026) or (r.get('season')==2026 and int(r.get('week') or 0)>8):continue
+            if r.get('season_type','REG') not in (None,'REG'):continue
+            if r.get('posteam') is None or r.get('game_id') is None:continue
+            dv=r.get('drive') or r.get('fixed_drive')
+            if dv is None:continue
+            drives[(r['season'],r['week'],r['game_id'],r['posteam'])].add(str(dv))
+          result=[{'season':k[0],'week':k[1],'game_id':k[2],'team':k[3],'offensive_drives':len(v)} for k,v in drives.items()]
+          assert len(result)>400,len(result)
+          print('Team game drive counts',len(result),'sample',result[:4],flush=True)
+          pathlib.Path('drive_data').mkdir(exist_ok=True)
+          pathlib.Path('drive_data/historical_team_drives.json').write_text(json.dumps(result))
+          PY
+      - name: Upload historical drive counts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Big_BLUE_historical_team_drive_counts
+          path: drive_data/
+          if-no-files-found: error
