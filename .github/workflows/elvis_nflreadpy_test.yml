@@ -1,0 +1,82 @@
+name: Elvis Algo - test free NFL data
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check-nflreadpy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install nflreadpy
+        run: python -m pip install --upgrade nflreadpy
+
+      - name: Check actual 2026 player and snap data
+        shell: bash
+        run: |
+          python - <<'PY'
+          import nflreadpy as nfl
+          from collections import defaultdict
+
+          SEASON = 2026
+          print(f'Checking live nflverse feeds for NFL season {SEASON}', flush=True)
+          stats = nfl.load_player_stats(seasons=SEASON, summary_level='week')
+          snaps = nfl.load_snap_counts(seasons=SEASON)
+
+          for label, df in [('PLAYER STATS', stats), ('SNAP COUNTS', snaps)]:
+              if df.is_empty():
+                  raise RuntimeError(f'{label}: no rows returned')
+              columns = set(df.columns)
+              if not {'season', 'week'} <= columns:
+                  raise RuntimeError(f'{label}: missing season/week: {sorted(columns)}')
+              rows = [r for r in df.to_dicts() if r.get('season') == SEASON and r.get('week') is not None]
+              if not rows:
+                  raise RuntimeError(f'{label}: no verified {SEASON} rows')
+              latest = max(int(r['week']) for r in rows)
+              print(f'{label}: {len(rows):,} rows | latest week {latest} | columns: {", ".join(sorted(columns))}', flush=True)
+              if label == 'PLAYER STATS' and latest < 8:
+                  raise RuntimeError('Player statistics are too old for a Week 9 pregame run (need Week 8)')
+              if label == 'SNAP COUNTS' and latest < 8:
+                  print('WARNING: Snap counts lag Week 8. Do not label this input fully verified.', flush=True)
+
+          required = {'targets', 'receptions', 'receiving_yards', 'rushing_yards'}
+          missing = required - set(stats.columns)
+          if not ({'carries', 'rushing_attempts'} & set(stats.columns)):
+              missing.add('carries/rushing_attempts')
+          if missing:
+              raise RuntimeError(f'Missing required player columns: {sorted(missing)}')
+
+          name_col = next((c for c in ['player_display_name', 'player_name', 'player'] if c in stats.columns), None)
+          if name_col is None:
+              raise RuntimeError('Could not identify player names')
+          rush_col = 'carries' if 'carries' in stats.columns else 'rushing_attempts'
+          games = defaultdict(list)
+          for r in stats.to_dicts():
+              if r.get('season') != SEASON or r.get('week') is None:
+                  continue
+              if 'season_type' in r and r['season_type'] not in (None, 'REG'):
+                  continue
+              name = r.get(name_col)
+              if name:
+                  games[(str(name), r.get('recent_team'))].append(r)
+
+          print('\nLAST THREE GAMES: sample calculations', flush=True)
+          examples = sorted(games.items(), key=lambda pair: sum(float(g.get('targets') or 0) for g in pair[1]), reverse=True)
+          for (name, team), history in examples[:8]:
+              last3 = sorted(history, key=lambda g: int(g['week']))[-3:]
+              weeks = [int(g['week']) for g in last3]
+              avg_targets = sum(float(g.get('targets') or 0) for g in last3) / len(last3)
+              avg_carries = sum(float(g.get(rush_col) or 0) for g in last3) / len(last3)
+              print(f'{name} ({team}) weeks {weeks}: targets {avg_targets:.2f}/game, carries {avg_carries:.2f}/game', flush=True)
+
+          print('\nPASS: live 2026 player statistics and snap counts were retrieved.', flush=True)
+          print('NOTE: routes run, verified opponent matchups, injuries and odds remain separate feeds.', flush=True)
+          PY
