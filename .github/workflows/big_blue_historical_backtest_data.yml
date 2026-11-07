@@ -1,0 +1,51 @@
+name: Big BLUE historical backtest data (no live picks)
+on:
+  push:
+    paths:
+      - '.github/workflows/big_blue_historical_backtest_data.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  historical-2025-2026:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install nflreadpy
+        run: python -m pip install nflreadpy
+      - name: Build past-only data archive
+        run: |
+          python - <<'PY'
+          import nflreadpy as nfl, json, pathlib, datetime
+          Y=(2025,2026)
+          def normalize(v):
+              if v is None or isinstance(v,(str,int,float,bool)):return v
+              try:return v.isoformat()
+              except Exception:return str(v)
+          s=nfl.load_player_stats(seasons=list(Y),summary_level='week')
+          t=nfl.load_snap_counts(seasons=list(Y))
+          sc=nfl.load_schedules()
+          stats=s.to_dicts();snaps=t.to_dicts();schedule=sc.to_dicts()
+          wanted_stats=['season','week','season_type','game_type','player_id','player_display_name','player_name','player','recent_team','team','position','targets','receptions','receiving_yards','carries','rushing_yards','attempts','completions','passing_yards','passing_tds','receiving_tds','rushing_tds']
+          wanted_snaps=['season','week','team','player','offense_pct','offense_snaps']
+          wanted_schedule=['season','week','game_type','game_id','gameday','gametime','away_team','home_team','away_score','home_score','total_line','spread_line','away_rest','home_rest','roof','surface','stadium','div_game']
+          def keep(rows,fields):
+              return [{k:normalize(r.get(k)) for k in fields if k in r} for r in rows if int(r.get('season') or 0) in Y and int(r.get('week') or 0)>0 and (int(r.get('season'))!=2026 or int(r.get('week'))<=8)]
+          out={'source':'nflreadpy/nflverse official snapshots', 'captured_utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'season_2026_max_week':8,'stat_columns':s.columns,'snap_columns':t.columns,'schedule_columns':sc.columns,'stats':keep(stats,wanted_stats),'snaps':keep(snaps,wanted_snaps),'schedule':keep(schedule,wanted_schedule)}
+          assert len(out['stats'])>6500 and len(out['snaps'])>15000 and len(out['schedule'])>200, {k:len(v) if isinstance(v,list) else type(v).__name__ for k,v in out.items()}
+          assert all(r['week']<=8 for r in out['stats'] if r['season']==2026)
+          print('ARCHIVE READY', {k:len(out[k]) for k in ('stats','snaps','schedule')})
+          print('SCHEDULE SAMPLE',out['schedule'][:2])
+          p=pathlib.Path('backtest_history');p.mkdir(exist_ok=True)
+          (p/'Big_BLUE_2025_2026_historical_inputs.json').write_text(json.dumps(out,separators=(',',':')))
+          print('No 2026 weeks 9+ and no future feeds included')
+          PY
+      - name: Upload historical-only dataset
+        uses: actions/upload-artifact@v4
+        with:
+          name: Big_BLUE_historical_data_2025_2026
+          path: backtest_history/
+          if-no-files-found: error
