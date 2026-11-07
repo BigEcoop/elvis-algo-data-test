@@ -1,0 +1,38 @@
+name: Big BLUE archived injury availability research
+on:
+  push:
+    paths:
+      - '.github/workflows/big_blue_archived_injuries.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  injuries:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install nflreadpy
+        run: python -m pip install nflreadpy
+      - name: Download dated NFL injury reports
+        run: |
+          python - <<'PY'
+          import nflreadpy as nfl,json,pathlib,collections
+          try:
+            raw=nfl.load_injuries(seasons=[2025,2026]);rows=raw.to_dicts()
+          except Exception as exc:
+            print('FAIL',repr(exc));raise
+          wanted=('season','week','team','gsis_id','position','full_name','report_primary_injury','report_status','practice_status','season_type')
+          rows=[{k:r.get(k) for k in wanted} for r in rows if r.get('season') in (2025,2026) and (r.get('season')!=2026 or (r.get('week') or 0)<=8)]
+          print('NFL injury records:',len(rows),'status counts:',collections.Counter(str(r['report_status']) for r in rows).most_common(12))
+          print('sample',rows[:2])
+          pathlib.Path('archived_injuries').mkdir(exist_ok=True)
+          pathlib.Path('archived_injuries/Big_BLUE_historical_injuries.json').write_text(json.dumps(rows,default=str))
+          PY
+      - name: Upload injury report research
+        uses: actions/upload-artifact@v4
+        with:
+          name: Big_BLUE_historical_injuries
+          path: archived_injuries/
+          if-no-files-found: error
