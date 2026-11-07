@@ -1,0 +1,48 @@
+name: Big BLUE free historical prop market research
+on:
+  push:
+    paths:
+      - '.github/workflows/big_blue_historical_props_probe.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Probe public NFL historical prop summary
+        run: |
+          python - <<'PY'
+          import urllib.request,csv,io,json,pathlib
+          url='https://theoddsgap.com/api/prop-summary.csv?league=nfl'
+          req=urllib.request.Request(url,headers={'User-Agent':'Mozilla/5.0 (historical backtest research)','Accept':'text/csv'})
+          try:
+            with urllib.request.urlopen(req,timeout=35) as resp:
+              b=resp.read(12000000)
+              status=resp.status
+              typ=resp.headers.get('content-type')
+            s=b.decode('utf-8-sig',errors='replace')
+            reader=csv.DictReader(io.StringIO(s))
+            rows=list(reader)
+            print('HTTP',status,'type',typ,'byte_count',len(b),'records',len(rows), 'headers',reader.fieldnames)
+            print('SAMPLES',rows[:2])
+            print('BOOK NAMES',sorted({r.get('book','') for r in rows})[:30])
+            pathlib.Path('props_probe').mkdir(exist_ok=True)
+            with open('props_probe/props_public_free_week.json','w') as f:
+              json.dump({'source':url,'row_count':len(rows),'fields':reader.fieldnames,'rows':rows},f)
+            if len(rows)<10:raise RuntimeError('Too few historical prop rows')
+          except Exception as e:
+            print('FREE MARKET PROBE FAILED',type(e).__name__,str(e))
+            raise
+          PY
+      - name: Upload free historical odds probe
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Big_BLUE_public_free_props
+          path: props_probe/
+          if-no-files-found: error
