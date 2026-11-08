@@ -1,0 +1,47 @@
+name: FUMBLE roster and OL-DL audit
+
+on:
+  workflow_dispatch:
+    inputs:
+      season:
+        description: 'NFL season'
+        required: true
+        default: '2026'
+      through_week:
+        description: 'Last completed NFL week (Week 9 pregame = 8)'
+        required: true
+        default: '8'
+      cutoff_utc:
+        description: 'Optional ISO UTC depth snapshot cutoff; blank = run time'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install nflreadpy
+        run: python -m pip install --upgrade nflreadpy
+      - name: Gather roster, depth chart and line data
+        env:
+          SEASON: ${{ inputs.season }}
+          THROUGH_WEEK: ${{ inputs.through_week }}
+          CUTOFF_UTC: ${{ inputs.cutoff_utc }}
+        run: python scripts/fumble_roster_line_audit.py
+      - name: Upload data ZIP
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fumble-roster-line-audit
+          path: fumble_line_audit/
+          retention-days: 30
