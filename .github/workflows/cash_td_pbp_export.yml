@@ -1,0 +1,30 @@
+name: CASH TD play-by-play historical export
+
+on:
+  push:
+    paths:
+      - 'scripts/cash_td_pbp_export.py'
+      - '.github/workflows/cash_td_pbp_export.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gather-pbp:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install --upgrade nflreadpy
+      - name: Export historical PBP, limited columns
+        run: python scripts/cash_td_pbp_export.py
+      - name: Save source data
+        uses: actions/upload-artifact@v4
+        with:
+          name: cash-td-pbp-2025-2026-w8
+          path: cash_touchdown_pbp_export/
+          retention-days: 14
