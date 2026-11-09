@@ -5,6 +5,9 @@ on:
       - xyz-pbp-validation-20261109
     paths:
       - .github/workflows/xyz-pbp-validation.yml
+  pull_request:
+    branches:
+      - main
 permissions:
   contents: read
 jobs:
@@ -23,7 +26,7 @@ jobs:
           import os,requests,pandas as pd,hashlib,json,datetime,gzip
           from pathlib import Path
           out=Path('pbp_export');out.mkdir(exist_ok=True)
-          cols=['season','week','season_type','game_id','play_id','posteam','play_type','pass_attempt','rush_attempt','qb_scramble','qb_kneel','qb_spike','sack','no_play','rusher_player_id','rusher_player_name','yards_gained','rushing_yards','pass_touchdown','rush_touchdown','yardline_100','down','ydstogo','drive','half_seconds_remaining','score_differential','posteam_score','defteam_score','passer_player_id','receiver_player_id','fixed_drive','end_of_drive','field_goal_attempt','field_goal_result','qtr','home_team','away_team','game_date']
+          cols=['season','week','season_type','game_id','play_id','posteam','defteam','play_type','pass_attempt','rush_attempt','qb_scramble','qb_kneel','qb_spike','sack','no_play','rusher_player_id','rusher_player_name','yards_gained','rushing_yards','pass_touchdown','rush_touchdown','yardline_100','down','ydstogo','drive','half_seconds_remaining','score_differential','posteam_score','defteam_score','passer_player_id','receiver_player_id','fixed_drive','end_of_drive','field_goal_attempt','field_goal_result','qtr','home_team','away_team','game_date']
           pieces=[];audit={}
           for season in (2025,2026):
               url=f'https://github.com/nflverse/nflverse-data/releases/download/pbp/play_by_play_{season}.parquet'
