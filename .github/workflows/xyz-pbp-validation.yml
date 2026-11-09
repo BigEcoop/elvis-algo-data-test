@@ -1,0 +1,50 @@
+name: XYZ one-time PBP validation export
+on:
+  push:
+    branches:
+      - xyz-pbp-validation-20261109
+    paths:
+      - .github/workflows/xyz-pbp-validation.yml
+permissions:
+  contents: read
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas pyarrow requests
+      - name: Download and export verified historical PBP
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os,requests,pandas as pd,hashlib,json,datetime,gzip
+          from pathlib import Path
+          out=Path('pbp_export');out.mkdir(exist_ok=True)
+          cols=['season','week','season_type','game_id','play_id','posteam','play_type','pass_attempt','rush_attempt','qb_scramble','qb_kneel','qb_spike','sack','no_play','rusher_player_id','rusher_player_name','yards_gained','rushing_yards','pass_touchdown','rush_touchdown','yardline_100','down','ydstogo','drive','half_seconds_remaining','score_differential','posteam_score','defteam_score','passer_player_id','receiver_player_id','fixed_drive','end_of_drive','field_goal_attempt','field_goal_result','qtr','home_team','away_team','game_date']
+          pieces=[];audit={}
+          for season in (2025,2026):
+              url=f'https://github.com/nflverse/nflverse-data/releases/download/pbp/play_by_play_{season}.parquet'
+              r=requests.get(url,timeout=180);r.raise_for_status()
+              raw=r.content;rawpath=out/f'original_{season}.parquet';rawpath.write_bytes(raw)
+              frame=pd.read_parquet(rawpath)
+              assert 'week' in frame and 'game_id' in frame and 'posteam' in frame and 'play_id' in frame
+              f=frame[(frame['week']<=8)&(frame['week']>=1)&(frame['season']==season)&(frame['season_type']=='REG')].copy()
+              existing=[c for c in cols if c in f.columns]
+              f=f[existing]
+              assert len(f)>10000, (season,len(f))
+              pieces.append(f)
+              audit[str(season)]={'source':url,'sha256':hashlib.sha256(raw).hexdigest(),'full_rows':len(frame),'rows_weeks_1_8':len(f),'games_weeks_1_8':int(f.game_id.nunique()),'columns':existing,'max_week':int(f.week.max())}
+              rawpath.unlink()
+          combined=pd.concat(pieces,ignore_index=True)
+          combined.to_csv(out/'nflverse_2025_2026_pbp_weeks_1_8.csv.gz',compression='gzip',index=False)
+          (out/'source_manifest.json').write_text(json.dumps({'download_utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'rows':len(combined),'audit':audit,'policy':'raw source rows; each replay target week must strictly filter row.week < target_week'},indent=2))
+          print(json.dumps(audit,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: XYZ_historical_pbp_2025_2026_weeks1_8
+          path: pbp_export/
+          retention-days: 7
