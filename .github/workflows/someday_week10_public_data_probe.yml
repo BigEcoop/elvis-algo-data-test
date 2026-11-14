@@ -1,0 +1,66 @@
+name: SOMEDAY Week 10 public NFLverse data probe
+on:
+  push:
+    paths:
+      - '.github/workflows/someday_week10_public_data_probe.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install current nflreadpy
+        run: python -m pip install nflreadpy
+      - name: Export current NFLverse data (no personal model code)
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os,json,datetime
+          from pathlib import Path
+          import nflreadpy as nfl
+          out=Path('export');out.mkdir(exist_ok=True)
+          result={'exported_utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'season':2026}
+          for name,loader in [
+             ('player_stats', lambda:nfl.load_player_stats([2026],summary_level='week')),
+             ('snap_counts', lambda:nfl.load_snap_counts([2026])),
+             ('weekly_rosters', lambda:nfl.load_rosters_weekly([2026])),
+             ('injuries', lambda:nfl.load_injuries([2026])),
+             ('pbp', lambda:nfl.load_pbp([2026]))
+          ]:
+            try:
+              df=loader()
+              cols=df.columns
+              subset=df.filter(__import__('polars').col('week')<=9) if 'week' in cols else df
+              if name=='pbp' and 'home_team' in cols and 'away_team' in cols:
+                import polars as pl
+                subset=subset.filter(pl.col('home_team').is_in(['NE','DET'])|pl.col('away_team').is_in(['NE','DET']))
+              elif name=='weekly_rosters' and 'team' in cols:
+                import polars as pl
+                subset=subset.filter(pl.col('team').is_in(['NE','DET']))
+              elif name=='injuries' and 'team' in cols:
+                import polars as pl
+                subset=subset.filter(pl.col('team').is_in(['NE','DET']))
+              subset.write_csv(out/f'{name}.csv')
+              weeks=subset.get_column('week').unique().to_list() if 'week' in cols else []
+              result[name]={'rows':subset.height,'columns':cols,'weeks':sorted([int(x) for x in weeks if x is not None]),'ok':True}
+              print(name,subset.height,'rows; max week',max(weeks) if weeks else 'N/A',flush=True)
+            except Exception as e:
+              result[name]={'ok':False,'error':str(e)}
+              print(name,'ERROR',type(e).__name__,str(e),flush=True)
+          (out/'audit.json').write_text(json.dumps(result,indent=2,default=str))
+          if not result.get('player_stats',{}).get('ok') or not result.get('snap_counts',{}).get('ok'):
+              raise SystemExit('Missing primary 2026 player stats or snap counts; abort')
+          PY
+      - name: Save source audit and public data only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: someday-2026-public-source
+          path: export/
+          retention-days: 3
+          if-no-files-found: warn
