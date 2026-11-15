@@ -64,3 +64,5 @@ jobs:
           path: export/
           retention-days: 3
           if-no-files-found: warn
+
+# BEACH RERUN 2026-11-14 18:56 CT — Patriots Lions fresh-input verification
