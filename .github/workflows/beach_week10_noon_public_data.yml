@@ -1,0 +1,64 @@
+name: BEACH noon Week 10 NFLverse public-data export
+on:
+  push:
+    paths:
+      - '.github/workflows/beach_week10_noon_public_data.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install nflreadpy
+        run: python -m pip install nflreadpy
+      - name: Fetch original 2026 league-wide datasets (all team histories, no proprietary model)
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import nflreadpy as nfl
+          import json,datetime,polars as pl
+          out=Path('beach_week10_public_data');out.mkdir(exist_ok=True)
+          audit={'capture_utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'target_week':10,'season':2026,'datasets':{}}
+          loaders=[
+            ('player_stats',lambda:nfl.load_player_stats([2026],summary_level='week'),True),
+            ('snap_counts',lambda:nfl.load_snap_counts([2026]),True),
+            ('weekly_rosters',lambda:nfl.load_rosters_weekly([2026]),True),
+            ('pbp',lambda:nfl.load_pbp([2026]),True),
+            ('schedules',lambda:nfl.load_schedules([2026]),True),
+            ('injuries',lambda:nfl.load_injuries([2026]),False),
+            ('depth_charts',lambda:nfl.load_depth_charts([2026]),False)
+          ]
+          errors=[]
+          for name,loader,required in loaders:
+            try:
+              df=loader()
+              if 'week' in df.columns:
+                df=df.filter(pl.col('week').is_not_null() & (pl.col('week')<10))
+              if 'season_type' in df.columns:
+                df=df.filter(pl.col('season_type').is_in(['REG',None]))
+              if df.height==0: raise RuntimeError('0 rows')
+              df.write_csv(out/f'{name}.csv')
+              weeks=sorted(int(x) for x in df['week'].unique().to_list() if x is not None) if 'week' in df.columns else []
+              audit['datasets'][name]={'status':'OK','rows':df.height,'weeks':weeks,'columns':list(df.columns)}
+              print(name,'OK',df.height,'weeks',weeks[-3:],flush=True)
+            except Exception as e:
+              audit['datasets'][name]={'status':'FAILED','error':str(e),'required':required}
+              if required:errors.append(f'{name}: {e}')
+              print(name,'FAILED',str(e),flush=True)
+          (out/'audit.json').write_text(json.dumps(audit,indent=2,default=str))
+          if errors: raise SystemExit('REQUIRED DATA MISSING: '+' | '.join(errors))
+          PY
+      - name: Archive source CSV and complete audit even on partial failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: beach-week10-noon-nflverse-source
+          path: beach_week10_public_data/
+          if-no-files-found: warn
+          retention-days: 5
