@@ -1,0 +1,78 @@
+name: I_like_me official NFLverse data-only export
+on:
+  workflow_dispatch:
+    inputs:
+      season:
+        description: 'NFL season year, optional (auto-detect if blank)'
+        required: false
+        type: string
+  schedule:
+    - cron: '30 16 * * 3'
+    - cron: '30 15 * * 4'
+    - cron: '00 16 * * 0'
+  push:
+    paths:
+      - '.github/workflows/i_like_me_nflverse_export.yml'
+permissions:
+  contents: read
+jobs:
+  nflverse-data-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Download and verify three CURRENT official nflverse assets
+        env:
+          REQUESTED_SEASON: ${{ inputs.season }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import datetime, gzip, hashlib, json, os, pathlib, re, shutil, time, urllib.request
+          base='https://api.github.com/repos/nflverse/nflverse-data/releases/tags/'
+          rel='https://github.com/nflverse/nflverse-data/releases/download/'
+          now=datetime.datetime.now(datetime.timezone.utc)
+          season=int(os.getenv('REQUESTED_SEASON') or (now.year if now.month>=3 else now.year-1))
+          out=pathlib.Path('nflverse_export');out.mkdir(exist_ok=True)
+          m={'format':'I_LIKE_ME_V3_GITHUB_NFLVERSE_EXPORT','source_mode':'OFFICIAL_GITHUB_RELEASES_SHA256',
+             'repository':'nflverse/nflverse-data','season':season,'captured_utc':now.isoformat(),
+             'github_workflow_run_id':os.getenv('GITHUB_RUN_ID'),'assets':{},
+             'retrieval':'GITHUB_ACTIONS_PUBLIC_NFLVERSE','no_model_or_betting_rules':True}
+          for kind,tag,pattern in [('pbp','pbp','play_by_play_{season}.csv.gz'),('player','stats_player','stats_player_week_{season}.csv.gz'),('team','stats_team','stats_team_week_{season}.csv.gz')]:
+            name=pattern.format(season=season)
+            def fetch(url):
+              errors=[]
+              for k in range(4):
+                try:
+                  with urllib.request.urlopen(urllib.request.Request(url,headers={'User-Agent':'I_like_me-V3-Data-Only'}),timeout=180) as r:return r.read()
+                except Exception as e:
+                  errors.append(repr(e));time.sleep(min(k+1,4))
+              raise RuntimeError('Public NFLverse asset/source unavailable: '+url+' '+str(errors))
+            a=next((x for x in json.loads(fetch(base+tag))['assets'] if x.get('name')==name and x.get('state')=='uploaded'),None)
+            if not a:raise RuntimeError('No official release asset '+name)
+            digest=str(a.get('digest') or '')
+            if not re.fullmatch('sha256:[a-f0-9]{64}',digest):raise RuntimeError('Official SHA256 unavailable '+name)
+            url=rel+tag+'/'+name
+            if a.get('browser_download_url')!=url:raise RuntimeError('Source URI discrepancy '+name)
+            raw=fetch(url)
+            if len(raw)!=int(a['size']) or hashlib.sha256(raw).hexdigest()!=digest.split(':')[1]:
+              raise RuntimeError('Official asset size/SHA256 mismatch '+name)
+            with gzip.open(__import__('io').BytesIO(raw),'rb') as f:
+              if not f.read(100):raise RuntimeError('Empty gzip '+name)
+              while f.read(1024*1024):pass
+            (out/name).write_bytes(raw)
+            m['assets'][kind]={'name':name,'release_tag':tag,'digest':digest,'size':int(a['size']),
+              'updated_at':a.get('updated_at'),'api_url':base+tag,'download_url':url}
+            print('VERIFIED',name,a['size'],digest,flush=True)
+          (out/'nflverse_release_manifest.json').write_text(json.dumps(m,indent=2)+'\n')
+          print('COMPLETE: 3 independently verified official NFLverse files; no model run',flush=True)
+          PY
+      - name: Save verified sources for ChatGPT GitHub connector handoff
+        uses: actions/upload-artifact@v4
+        with:
+          name: i-like-me-nflverse-${{ github.run_number }}
+          path: nflverse_export/
+          retention-days: 30
+          if-no-files-found: error
